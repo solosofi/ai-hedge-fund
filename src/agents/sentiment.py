@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import json
 from src.utils.api_key import get_api_key_from_state
-from src.tools.api import get_insider_trades, get_company_news
+from src.tools.api import get_insider_trades, get_company_news, is_crypto
 
 
 ##### Sentiment Agent #####
@@ -19,38 +19,36 @@ def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analys
     sentiment_analysis = {}
 
     for ticker in tickers:
-        progress.update_status(agent_id, ticker, "Fetching insider trades")
+        is_crypto_asset = is_crypto(ticker)
 
-        # Get the insider trades
-        insider_trades = get_insider_trades(
-            ticker=ticker,
-            end_date=end_date,
-            limit=1000,
-            api_key=api_key,
-        )
+        if not is_crypto_asset:
+            progress.update_status(agent_id, ticker, "Fetching insider trades")
+            insider_trades = get_insider_trades(
+                ticker=ticker,
+                end_date=end_date,
+                limit=1000,
+                api_key=api_key,
+            )
+            progress.update_status(agent_id, ticker, "Analyzing trading patterns")
+            transaction_shares = pd.Series([t.transaction_shares for t in insider_trades]).dropna()
+            insider_signals = np.where(transaction_shares < 0, "bearish", "bullish").tolist()
+            insider_weight = 0.3
+        else:
+            insider_signals = []
+            insider_weight = 0
 
-        progress.update_status(agent_id, ticker, "Analyzing trading patterns")
-
-        # Get the signals from the insider trades
-        transaction_shares = pd.Series([t.transaction_shares for t in insider_trades]).dropna()
-        insider_signals = np.where(transaction_shares < 0, "bearish", "bullish").tolist()
-
-        progress.update_status(agent_id, ticker, "Fetching company news")
-
-        # Get the company news
-        company_news = get_company_news(ticker, end_date, limit=100, api_key=api_key)
-
-        # Get the sentiment from the company news
-        sentiment = pd.Series([n.sentiment for n in company_news]).dropna()
-        news_signals = np.where(sentiment == "negative", "bearish", 
-                              np.where(sentiment == "positive", "bullish", "neutral")).tolist()
+        if not is_crypto_asset:
+            progress.update_status(agent_id, ticker, "Fetching company news")
+            company_news = get_company_news(ticker, end_date, limit=100, api_key=api_key)
+            sentiment = pd.Series([n.sentiment for n in company_news]).dropna()
+            news_signals = np.where(sentiment == "negative", "bearish",
+                                  np.where(sentiment == "positive", "bullish", "neutral")).tolist()
+        else:
+            news_signals = []
         
         progress.update_status(agent_id, ticker, "Combining signals")
-        # Combine signals from both sources with weights
-        insider_weight = 0.3
-        news_weight = 0.7
+        news_weight = 1.0 - insider_weight
         
-        # Calculate weighted signal counts
         bullish_signals = (
             insider_signals.count("bullish") * insider_weight +
             news_signals.count("bullish") * news_weight
@@ -67,18 +65,16 @@ def sentiment_analyst_agent(state: AgentState, agent_id: str = "sentiment_analys
         else:
             overall_signal = "neutral"
 
-        # Calculate confidence level based on the weighted proportion
         total_weighted_signals = len(insider_signals) * insider_weight + len(news_signals) * news_weight
-        confidence = 0  # Default confidence when there are no signals
+        confidence = 0
         if total_weighted_signals > 0:
             confidence = round((max(bullish_signals, bearish_signals) / total_weighted_signals) * 100, 2)
         
-        # Create structured reasoning similar to technical analysis
         reasoning = {
             "insider_trading": {
                 "signal": "bullish" if insider_signals.count("bullish") > insider_signals.count("bearish") else 
                          "bearish" if insider_signals.count("bearish") > insider_signals.count("bullish") else "neutral",
-                "confidence": round((max(insider_signals.count("bullish"), insider_signals.count("bearish")) / max(len(insider_signals), 1)) * 100),
+                "confidence": round((max(insider_signals.count("bullish"), insider_signals.count("bearish")) / max(len(insider_signals), 1)) * 100) if not is_crypto_asset else 0,
                 "metrics": {
                     "total_trades": len(insider_signals),
                     "bullish_trades": insider_signals.count("bullish"),

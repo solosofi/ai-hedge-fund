@@ -18,7 +18,7 @@ from src.agents.warren_buffett import warren_buffett_agent
 from src.agents.rakesh_jhunjhunwala import rakesh_jhunjhunwala_agent
 
 # Define analyst configuration - single source of truth
-ANALYST_CONFIG = {
+ALL_ANALYSTS_CONFIG = {
     "aswath_damodaran": {
         "display_name": "Aswath Damodaran",
         "description": "The Dean of Valuation",
@@ -141,13 +141,21 @@ ANALYST_CONFIG = {
     },
 }
 
+CRYPTO_ANALYST_CONFIG = {
+    "cathie_wood": ALL_ANALYSTS_CONFIG["cathie_wood"],
+    "technical_analyst": ALL_ANALYSTS_CONFIG["technical_analyst"],
+    "sentiment_analyst": ALL_ANALYSTS_CONFIG["sentiment_analyst"],
+}
+
 # Derive ANALYST_ORDER from ANALYST_CONFIG for backwards compatibility
-ANALYST_ORDER = [(config["display_name"], key) for key, config in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])]
+ANALYST_ORDER = [(config["display_name"], key) for key, config in sorted(ALL_ANALYSTS_CONFIG.items(), key=lambda x: x[1]["order"])]
+CRYPTO_ANALYST_ORDER = [(config["display_name"], key) for key, config in sorted(CRYPTO_ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])]
 
 
-def get_analyst_nodes():
+def get_analyst_nodes(is_crypto=False):
     """Get the mapping of analyst keys to their (node_name, agent_func) tuples."""
-    return {key: (f"{key}_agent", config["agent_func"]) for key, config in ANALYST_CONFIG.items()}
+    config = CRYPTO_ANALYST_CONFIG if is_crypto else ALL_ANALYSTS_CONFIG
+    return {key: (f"{key}_agent", config["agent_func"]) for key, config in config.items()}
 
 
 def get_agents_list():
@@ -160,5 +168,5 @@ def get_agents_list():
             "investing_style": config["investing_style"],
             "order": config["order"]
         }
-        for key, config in sorted(ANALYST_CONFIG.items(), key=lambda x: x[1]["order"])
+        for key, config in sorted(ALL_ANALYSTS_CONFIG.items(), key=lambda x: x[1]["order"])
     ]

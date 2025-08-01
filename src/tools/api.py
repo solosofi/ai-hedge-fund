@@ -57,8 +57,52 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         return response
 
 
+# A list of common cryptocurrencies to identify them
+CRYPTO_LIST = [
+    "bitcoin", "ethereum", "tether", "binancecoin", "solana", "ripple", "usd-coin", "staked-ether", "cardano", "dogecoin"
+]
+
+def is_crypto(ticker: str) -> bool:
+    """Check if a ticker is a cryptocurrency."""
+    return ticker.lower() in CRYPTO_LIST
+
+def get_crypto_prices(ticker: str, start_date: str, end_date: str) -> list[Price]:
+    """Fetch cryptocurrency price data from CoinGecko."""
+    # Convert dates to unix timestamps
+    start_timestamp = int(datetime.datetime.strptime(start_date, "%Y-%m-%d").timestamp())
+    end_timestamp = int(datetime.datetime.strptime(end_date, "%Y-%m-%d").timestamp())
+
+    url = f"https://api.coingecko.com/api/v3/coins/{ticker}/market_chart/range?vs_currency=usd&from={start_timestamp}&to={end_timestamp}"
+    response = _make_api_request(url, {})
+    if response.status_code != 200:
+        raise Exception(f"Error fetching crypto data: {ticker} - {response.status_code} - {response.text}")
+
+    data = response.json()
+    prices = []
+    for price_data in data['prices']:
+        timestamp, price = price_data
+        dt_object = datetime.datetime.fromtimestamp(timestamp / 1000)
+        prices.append(Price(
+            time=dt_object.strftime("%Y-%m-%d %H:%M:%S"),
+            open=price,
+            high=price,
+            low=price,
+            close=price,
+            volume=0  # Volume data is in a separate key, will handle later if needed
+        ))
+
+    # Add volume data
+    for i, volume_data in enumerate(data['total_volumes']):
+        if i < len(prices):
+            prices[i].volume = volume_data[1]
+
+    return prices
+
 def get_prices(ticker: str, start_date: str, end_date: str, api_key: str = None) -> list[Price]:
     """Fetch price data from cache or API."""
+    if is_crypto(ticker):
+        return get_crypto_prices(ticker, start_date, end_date)
+
     # Create a cache key that includes all parameters to ensure exact matches
     cache_key = f"{ticker}_{start_date}_{end_date}"
     
@@ -288,12 +332,30 @@ def get_company_news(
     return all_news
 
 
+def get_crypto_market_cap(ticker: str) -> float | None:
+    """Fetch cryptocurrency market cap from CoinGecko."""
+    url = f"https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids={ticker}"
+    response = _make_api_request(url, {})
+    if response.status_code != 200:
+        print(f"Error fetching crypto market cap: {ticker} - {response.status_code} - {response.text}")
+        return None
+
+    data = response.json()
+    if not data:
+        return None
+
+    return data[0].get("market_cap")
+
+
 def get_market_cap(
     ticker: str,
     end_date: str,
     api_key: str = None,
 ) -> float | None:
     """Fetch market cap from the API."""
+    if is_crypto(ticker):
+        return get_crypto_market_cap(ticker)
+
     # Check if end_date is today
     if end_date == datetime.datetime.now().strftime("%Y-%m-%d"):
         # Get the market cap from company facts API

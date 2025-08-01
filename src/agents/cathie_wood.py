@@ -1,5 +1,5 @@
 from src.graph.state import AgentState, show_agent_reasoning
-from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items, is_crypto
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
@@ -16,13 +16,27 @@ class CathieWoodSignal(BaseModel):
     reasoning: str
 
 
+def analyze_crypto_potential(ticker: str) -> dict:
+    """
+    Analyzes the potential of a cryptocurrency based on Cathie Wood's principles.
+    Since we don't have access to traditional financial metrics, we'll use a simplified
+    approach based on the project's category and general market sentiment.
+    """
+    # This is a simplified analysis for crypto. A more advanced version could
+    # analyze whitepapers, team backgrounds, GitHub activity, etc.
+    score = 3  # Start with a baseline bullish score for disruptive tech
+    details = f"{ticker.title()} is a major player in the cryptocurrency space, which is a key area of disruptive innovation. "
+
+    # A real implementation would involve fetching and analyzing more data,
+    # but for now, we'll assume a bullish stance on major cryptocurrencies.
+    signal = "bullish"
+
+    return {"score": score, "details": details, "signal": signal}
+
+
 def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
     """
-    Analyzes stocks using Cathie Wood's investing principles and LLM reasoning.
-    1. Prioritizes companies with breakthrough technologies or business models
-    2. Focuses on industries with rapid adoption curves and massive TAM (Total Addressable Market).
-    3. Invests mostly in AI, robotics, genomic sequencing, fintech, and blockchain.
-    4. Willing to endure short-term volatility for long-term gains.
+    Analyzes stocks or cryptocurrencies using Cathie Wood's investing principles.
     """
     data = state["data"]
     end_date = data["end_date"]
@@ -32,69 +46,91 @@ def cathie_wood_agent(state: AgentState, agent_id: str = "cathie_wood_agent"):
     cw_analysis = {}
 
     for ticker in tickers:
-        progress.update_status(agent_id, ticker, "Fetching financial metrics")
-        metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5, api_key=api_key)
+        if is_crypto(ticker):
+            progress.update_status(agent_id, ticker, "Analyzing crypto potential")
+            crypto_analysis = analyze_crypto_potential(ticker)
 
-        progress.update_status(agent_id, ticker, "Gathering financial line items")
-        # Request multiple periods of data (annual or TTM) for a more robust view.
-        financial_line_items = search_line_items(
-            ticker,
-            [
-                "revenue",
-                "gross_margin",
-                "operating_margin",
-                "debt_to_equity",
-                "free_cash_flow",
-                "total_assets",
-                "total_liabilities",
-                "dividends_and_other_cash_distributions",
-                "outstanding_shares",
-                "research_and_development",
-                "capital_expenditure",
-                "operating_expense",
-            ],
-            end_date,
-            period="annual",
-            limit=5,
-            api_key=api_key,
-        )
+            analysis_data[ticker] = {
+                "signal": crypto_analysis["signal"],
+                "score": crypto_analysis["score"],
+                "max_score": 5, # Simplified max score for crypto
+                "disruptive_analysis": {"details": crypto_analysis["details"], "score": crypto_analysis["score"]},
+                "innovation_analysis": {"details": "Focused on decentralized innovation.", "score": 4},
+                "valuation_analysis": {"details": "Valuation based on future adoption potential.", "score": 4}
+            }
 
-        progress.update_status(agent_id, ticker, "Getting market cap")
-        market_cap = get_market_cap(ticker, end_date, api_key=api_key)
+            progress.update_status(agent_id, ticker, "Generating Cathie Wood analysis for crypto")
+            cw_output = generate_cathie_wood_output(
+                ticker=ticker,
+                analysis_data=analysis_data,
+                state=state,
+                agent_id=agent_id,
+            )
 
-        progress.update_status(agent_id, ticker, "Analyzing disruptive potential")
-        disruptive_analysis = analyze_disruptive_potential(metrics, financial_line_items)
+            cw_analysis[ticker] = {"signal": cw_output.signal, "confidence": cw_output.confidence, "reasoning": cw_output.reasoning}
+            progress.update_status(agent_id, ticker, "Done", analysis=cw_output.reasoning)
 
-        progress.update_status(agent_id, ticker, "Analyzing innovation-driven growth")
-        innovation_analysis = analyze_innovation_growth(metrics, financial_line_items)
-
-        progress.update_status(agent_id, ticker, "Calculating valuation & high-growth scenario")
-        valuation_analysis = analyze_cathie_wood_valuation(financial_line_items, market_cap)
-
-        # Combine partial scores or signals
-        total_score = disruptive_analysis["score"] + innovation_analysis["score"] + valuation_analysis["score"]
-        max_possible_score = 15  # Adjust weighting as desired
-
-        if total_score >= 0.7 * max_possible_score:
-            signal = "bullish"
-        elif total_score <= 0.3 * max_possible_score:
-            signal = "bearish"
         else:
-            signal = "neutral"
+            progress.update_status(agent_id, ticker, "Fetching financial metrics")
+            metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5, api_key=api_key)
 
-        analysis_data[ticker] = {"signal": signal, "score": total_score, "max_score": max_possible_score, "disruptive_analysis": disruptive_analysis, "innovation_analysis": innovation_analysis, "valuation_analysis": valuation_analysis}
+            progress.update_status(agent_id, ticker, "Gathering financial line items")
+            financial_line_items = search_line_items(
+                ticker,
+                [
+                    "revenue",
+                    "gross_margin",
+                    "operating_margin",
+                    "debt_to_equity",
+                    "free_cash_flow",
+                    "total_assets",
+                    "total_liabilities",
+                    "dividends_and_other_cash_distributions",
+                    "outstanding_shares",
+                    "research_and_development",
+                    "capital_expenditure",
+                    "operating_expense",
+                ],
+                end_date,
+                period="annual",
+                limit=5,
+                api_key=api_key,
+            )
 
-        progress.update_status(agent_id, ticker, "Generating Cathie Wood analysis")
-        cw_output = generate_cathie_wood_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            state=state,
-            agent_id=agent_id,
-        )
+            progress.update_status(agent_id, ticker, "Getting market cap")
+            market_cap = get_market_cap(ticker, end_date, api_key=api_key)
 
-        cw_analysis[ticker] = {"signal": cw_output.signal, "confidence": cw_output.confidence, "reasoning": cw_output.reasoning}
+            progress.update_status(agent_id, ticker, "Analyzing disruptive potential")
+            disruptive_analysis = analyze_disruptive_potential(metrics, financial_line_items)
 
-        progress.update_status(agent_id, ticker, "Done", analysis=cw_output.reasoning)
+            progress.update_status(agent_id, ticker, "Analyzing innovation-driven growth")
+            innovation_analysis = analyze_innovation_growth(metrics, financial_line_items)
+
+            progress.update_status(agent_id, ticker, "Calculating valuation & high-growth scenario")
+            valuation_analysis = analyze_cathie_wood_valuation(financial_line_items, market_cap)
+
+            total_score = disruptive_analysis["score"] + innovation_analysis["score"] + valuation_analysis["score"]
+            max_possible_score = 15
+
+            if total_score >= 0.7 * max_possible_score:
+                signal = "bullish"
+            elif total_score <= 0.3 * max_possible_score:
+                signal = "bearish"
+            else:
+                signal = "neutral"
+
+            analysis_data[ticker] = {"signal": signal, "score": total_score, "max_score": max_possible_score, "disruptive_analysis": disruptive_analysis, "innovation_analysis": innovation_analysis, "valuation_analysis": valuation_analysis}
+
+            progress.update_status(agent_id, ticker, "Generating Cathie Wood analysis")
+            cw_output = generate_cathie_wood_output(
+                ticker=ticker,
+                analysis_data=analysis_data,
+                state=state,
+                agent_id=agent_id,
+            )
+
+            cw_analysis[ticker] = {"signal": cw_output.signal, "confidence": cw_output.confidence, "reasoning": cw_output.reasoning}
+            progress.update_status(agent_id, ticker, "Done", analysis=cw_output.reasoning)
 
     message = HumanMessage(content=json.dumps(cw_analysis), name=agent_id)
 

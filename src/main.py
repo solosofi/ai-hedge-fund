@@ -9,7 +9,8 @@ from src.agents.portfolio_manager import portfolio_management_agent
 from src.agents.risk_manager import risk_management_agent
 from src.graph.state import AgentState
 from src.utils.display import print_trading_output
-from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
+from src.tools.api import is_crypto
+from src.utils.analysts import ANALYST_ORDER, CRYPTO_ANALYST_ORDER, get_analyst_nodes
 from src.utils.progress import progress
 from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
 from src.utils.ollama import ensure_ollama_and_model
@@ -51,6 +52,7 @@ def run_hedge_fund(
     selected_analysts: list[str] = [],
     model_name: str = "gpt-4.1",
     model_provider: str = "OpenAI",
+    is_crypto_run: bool = False,
 ):
     # Start progress tracking
     progress.start()
@@ -58,7 +60,7 @@ def run_hedge_fund(
     try:
         # Create a new workflow if analysts are customized
         if selected_analysts:
-            workflow = create_workflow(selected_analysts)
+            workflow = create_workflow(selected_analysts, is_crypto=is_crypto_run)
             agent = workflow.compile()
         else:
             agent = app
@@ -99,13 +101,13 @@ def start(state: AgentState):
     return state
 
 
-def create_workflow(selected_analysts=None):
+def create_workflow(selected_analysts=None, is_crypto=False):
     """Create the workflow with selected analysts."""
     workflow = StateGraph(AgentState)
     workflow.add_node("start_node", start)
 
     # Get analyst nodes from the configuration
-    analyst_nodes = get_analyst_nodes()
+    analyst_nodes = get_analyst_nodes(is_crypto=is_crypto)
 
     # Default to all analysts if none selected
     if selected_analysts is None:
@@ -136,7 +138,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the hedge fund trading system")
     parser.add_argument("--initial-cash", type=float, default=100000.0, help="Initial cash position. Defaults to 100000.0)")
     parser.add_argument("--margin-requirement", type=float, default=0.0, help="Initial margin requirement. Defaults to 0.0")
-    parser.add_argument("--tickers", type=str, required=True, help="Comma-separated list of stock ticker symbols")
+    parser.add_argument("--tickers", type=str, required=True, help="Comma-separated list of stock ticker symbols or cryptocurrency IDs (e.g., bitcoin,ethereum)")
     parser.add_argument(
         "--start-date",
         type=str,
@@ -147,40 +149,58 @@ if __name__ == "__main__":
     parser.add_argument("--show-agent-graph", action="store_true", help="Show the agent graph")
     parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
 
+    parser.add_argument("--analysts", type=str, help="Comma-separated list of analyst keys to use")
+    parser.add_argument("--model-name", type=str, help="The name of the LLM model to use")
+    parser.add_argument("--model-provider", type=str, help="The provider of the LLM model")
     args = parser.parse_args()
 
     # Parse tickers from comma-separated string
     tickers = [ticker.strip() for ticker in args.tickers.split(",")]
+    is_crypto_run = is_crypto(tickers[0])
+
+    # Parse tickers from comma-separated string
+    tickers = [ticker.strip() for ticker in args.tickers.split(",")]
+    is_crypto_run = is_crypto(tickers[0])
 
     # Select analysts
     selected_analysts = None
-    choices = questionary.checkbox(
-        "Select your AI analysts.",
-        choices=[questionary.Choice(display, value=value) for display, value in ANALYST_ORDER],
-        instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n",
-        validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
-        style=questionary.Style(
-            [
-                ("checkbox-selected", "fg:green"),
-                ("selected", "fg:green noinherit"),
-                ("highlighted", "noinherit"),
-                ("pointer", "noinherit"),
-            ]
-        ),
-    ).ask()
-
-    if not choices:
-        print("\n\nInterrupt received. Exiting...")
-        sys.exit(0)
+    if args.analysts:
+        selected_analysts = [analyst.strip() for analyst in args.analysts.split(",")]
     else:
-        selected_analysts = choices
-        print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in choices)}\n")
+        analyst_order = CRYPTO_ANALYST_ORDER if is_crypto_run else ANALYST_ORDER
+        asset_type = "coins" if is_crypto_run else "stocks"
+
+        choices = questionary.checkbox(
+            f"Select your AI analysts for the {asset_type}.",
+            choices=[questionary.Choice(display, value=value) for display, value in analyst_order],
+            instruction="\n\nInstructions: \n1. Press Space to select/unselect analysts.\n2. Press 'a' to select/unselect all.\n3. Press Enter when done to run the hedge fund.\n",
+            validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
+            style=questionary.Style(
+                [
+                    ("checkbox-selected", "fg:green"),
+                    ("selected", "fg:green noinherit"),
+                    ("highlighted", "noinherit"),
+                    ("pointer", "noinherit"),
+                ]
+            ),
+        ).ask()
+
+        if not choices:
+            print("\n\nInterrupt received. Exiting...")
+            sys.exit(0)
+        else:
+            selected_analysts = choices
+
+    print(f"\nSelected analysts: {', '.join(Fore.GREEN + choice.title().replace('_', ' ') + Style.RESET_ALL for choice in selected_analysts)}\n")
 
     # Select LLM model based on whether Ollama is being used
     model_name = ""
     model_provider = ""
 
-    if args.ollama:
+    if args.model_name and args.model_provider:
+        model_name = args.model_name
+        model_provider = args.model_provider
+    elif args.ollama:
         print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
 
         # Select from Ollama-specific models
@@ -250,7 +270,7 @@ if __name__ == "__main__":
             print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
 
     # Create the workflow with selected analysts
-    workflow = create_workflow(selected_analysts)
+    workflow = create_workflow(selected_analysts, is_crypto=is_crypto_run)
     app = workflow.compile()
 
     if args.show_agent_graph:
@@ -283,17 +303,18 @@ if __name__ == "__main__":
     else:
         start_date = args.start_date
 
-    # Initialize portfolio with cash amount and stock positions
+    # Initialize portfolio with cash amount and positions
+    position_label = "coins" if is_crypto_run else "shares"
     portfolio = {
         "cash": args.initial_cash,  # Initial cash amount
         "margin_requirement": args.margin_requirement,  # Initial margin requirement
         "margin_used": 0.0,  # total margin usage across all short positions
         "positions": {
             ticker: {
-                "long": 0,  # Number of shares held long
-                "short": 0,  # Number of shares held short
+                "long": 0,  # Number of coins/shares held long
+                "short": 0,  # Number of coins/shares held short
                 "long_cost_basis": 0.0,  # Average cost basis for long positions
-                "short_cost_basis": 0.0,  # Average price at which shares were sold short
+                "short_cost_basis": 0.0,  # Average price at which coins/shares were sold short
                 "short_margin_used": 0.0,  # Dollars of margin used for this ticker's short
             }
             for ticker in tickers
@@ -317,5 +338,6 @@ if __name__ == "__main__":
         selected_analysts=selected_analysts,
         model_name=model_name,
         model_provider=model_provider,
+        is_crypto_run=is_crypto_run,
     )
     print_trading_output(result)
